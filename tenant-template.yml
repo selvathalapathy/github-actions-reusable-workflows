@@ -1,0 +1,93 @@
+name: App CI/CD Pipeline — Template for Tenants
+
+# ============================================================
+# HOW TO USE THIS TEMPLATE
+# Copy this file to your app repository at:
+# .github/workflows/cicd.yml
+# Then update the variables in the "Configure your app" section
+# ============================================================
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# ============================================================
+# Configure your app — change these values
+# ============================================================
+env:
+  APP_NAME: "my-app"                          # Your app name
+  IMAGE_NAME: "my-org/my-app"                 # Registry image name
+  REGISTRY: "ghcr.io"                         # Container registry
+  HELM_CHART_PATH: "./helm"                   # Helm chart location
+  E1_NAMESPACE: "my-app-dev"                  # Dev namespace
+  E2_NAMESPACE: "my-app-staging"              # Staging namespace
+  E3_NAMESPACE: "my-app-prod"                 # Production namespace
+  E1_REPLICAS: 1                              # Dev replicas
+  E2_REPLICAS: 2                              # Staging replicas
+  E3_REPLICAS: 3                              # Production replicas
+
+jobs:
+  # ── STAGE 1: Build & Push Image ──────────────────────────
+  build:
+    name: Build Docker Image
+    uses: your-org/github-actions-reusable-workflows/.github/workflows/reusable-docker-build.yml@main
+    with:
+      image-name: ${{ env.IMAGE_NAME }}
+      registry: ${{ env.REGISTRY }}
+      image-tag: ${{ github.sha }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+
+  # ── STAGE 2: Deploy to E1 (Dev) ──────────────────────────
+  deploy-e1:
+    name: Deploy to E1 (Dev)
+    needs: [build]
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+    uses: your-org/github-actions-reusable-workflows/.github/workflows/reusable-k8s-deploy.yml@main
+    with:
+      environment: "e1"
+      image-tag: ${{ github.sha }}
+      namespace: ${{ env.E1_NAMESPACE }}
+      app-name: ${{ env.APP_NAME }}
+      helm-chart-path: ${{ env.HELM_CHART_PATH }}
+      replicas: ${{ env.E1_REPLICAS }}
+      require-approval: false             # No approval needed for dev
+    secrets:
+      KUBECONFIG: ${{ secrets.E1_KUBECONFIG }}
+
+  # ── STAGE 3: Deploy to E2 (Staging) ──────────────────────
+  deploy-e2:
+    name: Deploy to E2 (Staging)
+    needs: [deploy-e1]
+    if: github.ref == 'refs/heads/main'
+    uses: your-org/github-actions-reusable-workflows/.github/workflows/reusable-k8s-deploy.yml@main
+    with:
+      environment: "e2"
+      image-tag: ${{ github.sha }}
+      namespace: ${{ env.E2_NAMESPACE }}
+      app-name: ${{ env.APP_NAME }}
+      helm-chart-path: ${{ env.HELM_CHART_PATH }}
+      replicas: ${{ env.E2_REPLICAS }}
+      require-approval: false             # Auto deploy to staging
+    secrets:
+      KUBECONFIG: ${{ secrets.E2_KUBECONFIG }}
+
+  # ── STAGE 4: Deploy to E3 (Production) ───────────────────
+  deploy-e3:
+    name: Deploy to E3 (Production)
+    needs: [deploy-e2]
+    if: github.ref == 'refs/heads/main'
+    uses: your-org/github-actions-reusable-workflows/.github/workflows/reusable-k8s-deploy.yml@main
+    with:
+      environment: "e3"
+      image-tag: ${{ github.sha }}
+      namespace: ${{ env.E3_NAMESPACE }}
+      app-name: ${{ env.APP_NAME }}
+      helm-chart-path: ${{ env.HELM_CHART_PATH }}
+      replicas: ${{ env.E3_REPLICAS }}
+      require-approval: true              # Manual approval required for PROD
+    secrets:
+      KUBECONFIG: ${{ secrets.E3_KUBECONFIG }}
